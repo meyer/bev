@@ -18,6 +18,7 @@ shared_urls = []
 media_by_hostname = {}
 urls_by_hostname = {}
 urls_by_http_code = {}
+expanded_urls = {}
 
 %w(INT TERM).each {|s| trap(s){puts "\ntake care out there \u{1f44b}"; abort}}
 
@@ -27,35 +28,34 @@ def expand_url(url, depth=0)
   depth += 1
   begin
     puts "==============" if depth == 1
-    puts "[#{depth}] Expanding #{url}"
+    uri = Addressable::URI.parse(url).normalize
+    puts "[#{depth}] Expanding #{uri}"
 
-    uri = Addressable::URI.parse(url)
     res = @client.get(url)
+    puts "#{res}"
 
     if res.status_code == 200
-      puts "200 #{url}"
-      return url
+      return ["200", url]
     elsif res.status_code.to_s =~ /^30\d$/ #&& res.header["Location"]
       unless url == res.header["Location"][0]
         location = res.header["Location"][0]
         unless location =~ /^https?:\/\//
-          puts "  - 'Location' did not include path"
+          puts "--- 'Location' did not include path"
           location = "#{uri.scheme}://#{uri.host}/#{location.gsub(/^\//,"")}"
         end
-        return expand_url location, depth
+        return expand_url(location, depth)
       else
-        puts "200 #{url}"
-        return url
+        return ["200", url]
       end
     else
-      puts "#{res.status_code} #{url}"
+      return ["#{res.status_code}", url]
     end
   rescue SystemExit, Interrupt
     raise
   rescue SocketError
     # DNS resolution error
     puts "  - DNS failed to resolve"
-    return nil
+    return ["---", url]
   end
 end
 
@@ -93,31 +93,23 @@ puts "","Let’s get this party started!",""
 
 # Build array of shared URLs
 shared_urls.each do |s|
-  begin
-    url = "#{s}"
-    url = "http://#{url}" unless url =~ /^https?:\/\//
+  url = "#{s}"
+  url = "http://#{url}" unless url =~ /^https?:\/\//
 
-    # Filter out invalid URLs
-    raise "nope" unless expanded_url = expand_url(url)
+  # Filter out invalid URLs
+  status_code, expanded_url = expand_url(url)
 
-    # Using addressable to deal with IDNs
-    u = Addressable::URI.parse(expanded_url).normalize
-    hostname = u.host.to_s.downcase
+  # Using addressable to deal with IDNs
+  u = Addressable::URI.parse(expanded_url).normalize
+  hostname = u.host.to_s.downcase
 
-    # Pretty dumb regex but whatever idgaf
-    if hostname =~ /(?<url>[\w\-]+(?:\.\w{2,3}){1,2})$/
-      hostname = $~[:url]
-    end
+  # Pretty dumb regex but whatever idgaf
+  hostname = $~[:url] if hostname =~ /(?<url>[\w\-]+(?:\.\w{2,3}){1,2})$/
 
-    urls_by_hostname[hostname] ||= []
-    urls_by_hostname[hostname].push expanded_url
+  urls_by_hostname[hostname] ||= []
+  urls_by_hostname[hostname].push expanded_url
 
-    puts "[x] #{expanded_url}"
-  rescue SystemExit, Interrupt
-    raise
-  rescue
-    puts "[ ] #{url}"
-  end
+  puts "#{status_code} #{expanded_url}"
 end
 
 puts "\nShared URLs"
