@@ -1,0 +1,6 @@
+# Known 404 URLs
+# Sometimes a site will redirect to /404 page and return a 200 status code instead of a 404.
+# Example: http://tr.im/jLaP
+# Format is URL sans scheme ("#{hostname}/#{path}")
+---
+- tr.im/404

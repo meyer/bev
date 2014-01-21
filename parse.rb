@@ -27,6 +27,7 @@ expanded_urls = {}
 
 KNOWN_MEDIA_HOSTNAMES = YAML.load_file "media_hostnames.yaml"
 KNOWN_DEAD_HOSTNAMES = YAML.load_file "dead_hostnames.yaml"
+KNOWN_404_URLS = YAML.load_file "404_urls.yaml"
 
 # Cap max redirects at 20 (same as Chrome)
 MAX_REDIRECTS = 20
@@ -49,6 +50,7 @@ class DeadHostnameError < StandardError; end
 class TooManyRedirectsError < StandardError; end
 class MediaURLError < StandardError; end
 class UnimplementedMediaURLError < StandardError; end
+class Weird404Error < StandardError; end
 
 # Start/stop timer
 def time
@@ -72,8 +74,8 @@ def expand_url(url, urls=[])
   begin
     # Exclude known dead hostnames
     raise DeadHostnameError if KNOWN_DEAD_HOSTNAMES.include? uri.host
-
     raise TooManyRedirectsError if urls.length >= MAX_REDIRECTS
+    raise Weird404Error if KNOWN_404_URLS.include? "#{uri.host}#{uri.path}"
 
     # Get response
     res = @client.head(uri.to_s) # HTTPClient.head(uri.to_s)
@@ -111,6 +113,9 @@ def expand_url(url, urls=[])
   rescue DeadHostnameError
     status = "xxx"
     puts " - '#{uri.host}' is a known dead hostname"
+  rescue Weird404Error
+    status = "404"
+    puts " (404) - '#{uri.host}#{uri.path}' is a known 404 page"
 
   # Catch-all
   rescue
@@ -192,7 +197,7 @@ Dir.glob("*.js") do |p|
       found_urls = v["entities"]["urls"].map {|u| u["expanded_url"]}
     end
 
-    found_urls.each do |u|
+    found_urls.delete_if do |u|
       uri = Addressable::URI.parse(u).normalize
       if KNOWN_MEDIA_HOSTNAMES.include? uri.host
         media_url = "BROKEN" # uri.to_s
@@ -242,6 +247,8 @@ Dir.glob("*.js") do |p|
 
         media_by_hostname[uri.host] ||= {}
         media_by_hostname[uri.host]["#{uri.host}#{uri.path}"] = media_url
+
+        true
       end
     end
 
@@ -274,7 +281,6 @@ puts "#{shared_urls.length} URLs in total"
 Dir.chdir IMG_CACHE_PATH
 puts "", "Let’s get this party started!"
 
-=begin
 time do
   # Build array of shared URLs
   shared_urls.each_with_index do |s, idx|
@@ -309,8 +315,6 @@ Hash[urls_by_hostname.sort].each do |k,v|
     puts " - #{d}"
   end
 end
-
-=end
 
 puts "", "Shared media", "==========="
 
