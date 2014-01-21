@@ -31,9 +31,13 @@ KNOWN_DEAD_HOSTNAMES = YAML.load_file "dead_hostnames.yaml"
 
 @client = HTTPClient.new
 
-# ???
-@client.connect_timeout = 4 # seconds
+# Timeouts, in seconds
+@client.send_timeout = 2
+# @client.receive_timeout = 2
+@client.connect_timeout = 4
 @client.keep_alive_timeout = 2
+
+# Kill SSL errors, speed up resolution
 @client.ssl_config.verify_mode = OpenSSL::SSL::VERIFY_NONE
 
 # Custom exception for KNOWN_DEAD_HOSTNAMES matches
@@ -61,7 +65,7 @@ def expand_url(url, urls=[])
     raise DeadHostnameError if KNOWN_DEAD_HOSTNAMES.include? uri.host
 
     # Get response
-    res = @client.get(uri.to_s)
+    res = @client.head(uri.to_s) # HTTPClient.head(uri.to_s)
     status = res.status_code.to_s
 
   # Allow interrupt
@@ -74,14 +78,22 @@ def expand_url(url, urls=[])
   rescue SocketError
     puts "--- DNS failed to resolve"
   rescue OpenSSL::SSL::SSLError
-    puts "--- SSL Error!"
+    puts "--- SSL error (probably a self-signed certificate)"
   rescue HTTPClient::ConnectTimeoutError
     puts "--- Connection timed out"
+  rescue HTTPClient::SendTimeoutError
+    puts "--- Send timed out (problematic)"
+  rescue HTTPClient::ReceiveTimeoutError
+    puts "--- Receive timed out (problematic)"
 
   # Blacklisted URLs
   rescue DeadHostnameError
     status = "xxx"
     puts "--- '#{uri.host}' is a known dead hostname"
+
+  # Catch-all
+  rescue
+    puts "--- Mystery error"
 
   # Always build url array
   ensure
@@ -187,7 +199,7 @@ time do
     urls_by_hostname[hostname] ||= []
     urls_by_hostname[hostname].push urls[0][1]
 
-    puts "","#{urls[0][0]} #{urls[0][1].length > 83 ? "#{urls[0][1][0...80]}..." : urls[0][1]}"
+    puts urls[0][0..1].join(" ")
   end
 end
 
