@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 require "uri"
 require "json"
+require "yaml"
 require "shellwords"
 
 require "twitter-text"
