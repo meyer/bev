@@ -69,7 +69,7 @@ def expand_url(url, urls=[])
 
     # secrets.blacktree.com returns 405 for HEAD requests
     # See it in action: curl -I http://secrets.blacktree.com
-    if status == "405"
+    if res.status_code.to_s == "405"
       puts "--- HEAD request failed"
       res = @client.get(uri.to_s)
     end
