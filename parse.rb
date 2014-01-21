@@ -20,6 +20,7 @@ shared_media = []
 shared_hashtags = []
 shared_urls = []
 media_by_hostname = {}
+total_media_url_count = 0
 urls_by_hostname = {}
 urls_by_http_code = {}
 expanded_urls = {}
@@ -152,8 +153,12 @@ end
 
 Dir.chdir("./tweets/data/js/tweets")
 
-# puts "", "Tweets by month:", "================"
+puts "", "Tweets by month:", "================"
 Dir.glob("*.js") do |p|
+  print "#{p}"
+
+  media_url_count = 0
+
   # get JSON
   tweets_by_month = JSON.parse(IO.read(p).lines.to_a[1..-1].join)
 
@@ -192,7 +197,11 @@ Dir.glob("*.js") do |p|
       if KNOWN_MEDIA_HOSTNAMES.include? uri.host
         media_url = "BROKEN" # uri.to_s
 
+        media_url_count += 1
+
         begin
+
+          next if uri.path == "/" or uri.path.empty?
 
           case uri.host
 
@@ -242,20 +251,23 @@ Dir.glob("*.js") do |p|
 
     media_by_hostname["pic.twitter.com"] ||= {}
     v["entities"]["media"].each do |m|
+      media_url_count += 1
       media_by_hostname["pic.twitter.com"][m["display_url"]] = m["media_url"]
     end
 
   end
 
-  # puts "#{p}: #{tweets_by_month.length} tweets"
+  puts " -- #{tweets_by_month.length} tweets, #{media_url_count} media URLs"
   # puts ignored_tweets.map {|t| " - Ignored #{t}"[0..60]}.join("\n") unless ignored_tweets.empty?
+
+  total_media_url_count += media_url_count
 
   tweets.concat tweets_by_month
 end
 
 puts
 puts "#{tweets.length} tweets in total"
-puts "#{shared_media.length} media shits in total"
+puts "#{total_media_url_count} media URLs in total"
 puts "#{shared_hashtags.length} hashtags in total"
 puts "#{shared_urls.length} URLs in total"
 
