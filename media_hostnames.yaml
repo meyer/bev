@@ -1,6 +1,8 @@
 # Known media hostnames
 # These URLs will be ignored by parse_url()
 # Full-size image source URLs will be dumped into media_by_hostname[hostname]
+# For parsing details, check the wiki
+# https://github.com/meyer/twitter-archive-parser/wiki#getting-full-sized-media-from-shared-media-urls
 ---
 - yfrog.com
 - yfrog.us
