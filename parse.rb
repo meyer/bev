@@ -2,8 +2,8 @@
 require "uri"
 require "json"
 require "shellwords"
-require "twitter-text"
 
+require "twitter-text"
 require "addressable/uri"
 require "httpclient"
 require "openssl"
@@ -57,7 +57,7 @@ def expand_url(url, depth=0)
     elsif res.status_code.to_s =~ /^30\d$/ #&& res.header["Location"]
       unless url == res.header["Location"][0]
         location = res.header["Location"][0]
-        unless location =~ /^https?:\/\//
+        unless location =~ /^https?:\/\//i
           puts " |  'Location' did not include path"
           location = "#{uri.scheme}://#{uri.host}/#{location.gsub(/^\//,"")}"
         end
@@ -91,7 +91,7 @@ end
 
 Dir.chdir("./tweets/data/js/tweets")
 
-puts "\nTweets by month:", "================"
+puts "","Tweets by month:","================"
 Dir.glob("*.js") do |p|
   # get JSON
   tweets_by_month = JSON.parse(IO.read(p).lines.to_a[1..-1].join)
@@ -102,13 +102,18 @@ Dir.glob("*.js") do |p|
     if v["entities"]["hashtags"].length > 0
       hashtagged_tweets.push "#{v["created_at"]}: #{v["text"]}"
     end
+
+    # Extract URLs
     if v["entities"]["urls"].length == 0
       shared_urls.concat Twitter::Extractor.extract_urls(v["text"])
     else
       shared_urls.concat v["entities"]["urls"].map {|u| u["expanded_url"]}
     end
+
     shared_media.concat v["entities"]["media"]
+
   end
+
   puts "#{p}: #{tweets_by_month.length} tweets"
   tweets.concat tweets_by_month
 end
@@ -126,9 +131,9 @@ time do
   # Build array of shared URLs
   shared_urls.each_with_index do |s, idx|
     url = "#{s}"
-    url = "http://#{url}" unless url =~ /^https?:\/\//
+    url = "http://#{url}" unless url =~ /^https?:\/\//i
 
-    puts "\n=== #{idx+1} of #{shared_urls.length} ==========="
+    puts "","=== #{idx+1} of #{shared_urls.length} ==========="
 
     # Filter out invalid URLs
     status_code, expanded_url = expand_url(url)
@@ -147,11 +152,11 @@ time do
   end
 end
 
-puts "\nShared URLs"
+puts "","Shared URLs"
 
 Hash[urls_by_hostname.sort].each do |k,v|
   puts "#{k}: (#{v.length})"
   v.each do |d|
-    puts " - #{d}\n"
+    puts " - #{d}"
   end
 end
