@@ -32,10 +32,14 @@ KNOWN_DEAD_HOSTNAMES = YAML.load_file "dead_hostnames.yaml"
 @client = HTTPClient.new
 
 # ???
-@client.connect_timeout = 2
+@client.connect_timeout = 4 # seconds
 @client.keep_alive_timeout = 2
 @client.ssl_config.verify_mode = OpenSSL::SSL::VERIFY_NONE
 
+# Custom exception for KNOWN_DEAD_HOSTNAMES matches
+class DeadHostnameError < StandardError; end
+
+# Start/stop timer
 def time
   start = Time.now
 yield
@@ -44,55 +48,73 @@ yield
   puts "Time elapsed: %d hours, %d minutes and %d seconds" % [hh, mm, ss]
 end
 
-def expand_url(url, depth=0)
-  depth += 1
+# Follow redirects to their final value
+# Returns an array of [status, url, normalised_url] arrays
+def expand_url(url, urls=[])
+  status = "---"
+  uri = Addressable::URI.parse(url).normalize
+
+  puts "[#{urls.length+1}] #{uri.to_s.length > 83 ? "#{uri.to_s[0...80]}..." : uri.to_s}"
+
   begin
-    uri = Addressable::URI.parse(url).normalize
-    puts "[#{depth}] Expanding #{uri.to_s.length > 83 ? "#{uri.to_s[0...80]}..." : uri.to_s}"
+    # Exclude known dead hostnames
+    raise DeadHostnameError if KNOWN_DEAD_HOSTNAMES.include? uri.host
 
-    #Y U no resolve http://xn--df-oiy.ws/ere!!
-    res = @client.get(url)
+    # Get response
+    res = @client.get(uri.to_s)
+    status = res.status_code.to_s
 
-    if res.status_code == 200
-      return ["200", url]
-    elsif res.status_code.to_s =~ /^30\d$/ #&& res.header["Location"]
-      unless url == res.header["Location"][0]
-        location = res.header["Location"][0]
-        unless location =~ /^https?:\/\//i
-          puts " |  'Location' did not include path"
-          location = "#{uri.scheme}://#{uri.host}/#{location.gsub(/^\//,"")}"
-        end
-        return expand_url(location, depth)
-      else
-        return ["200", url]
-      end
-    else
-      return ["#{res.status_code}", url]
-    end
+  # Allow interrupt
   rescue SystemExit, Interrupt
     raise
+
+  # Connection issues
   rescue Errno::ECONNREFUSED
     puts "--- Connection refused"
-    return ["---", url]
   rescue SocketError
-    # DNS resolution error
     puts "--- DNS failed to resolve"
-    return ["---", url]
   rescue OpenSSL::SSL::SSLError
     puts "--- SSL Error!"
-    return ["---", url]
   rescue HTTPClient::ConnectTimeoutError
     puts "--- Connection timed out"
-    return ["---", url]
-  rescue
-    puts "--- Mystery error"
-    return ["---", url]
+
+  # Blacklisted URLs
+  rescue DeadHostnameError
+    status = "xxx"
+    puts "--- '#{uri.host}' is a known dead hostname"
+
+  # Always build url array
+  ensure
+    urls.unshift ["#{status}", "#{url}", "#{uri.to_s}"]
   end
+
+  # Redirect status code?
+  if res && res.status_code.to_s =~ /^30\d$/
+    # Recurse if we have a Location header
+    unless url == res.header["Location"][0]
+      location = res.header["Location"][0]
+
+      # Append hostname if not present
+      unless location =~ /^https?:\/\//i
+        puts " |  'Location' did not include path"
+        location = "#{uri.scheme}://#{uri.host}/#{location.gsub(/^\//,"")}"
+      end
+
+      # Roll that beautiful bean footage
+      urls = expand_url(location, urls)
+
+    else
+      # Weird.
+      puts "--- Redirect to identical url (#{url})? Nah."
+    end
+  end
+
+  urls
 end
 
 Dir.chdir("./tweets/data/js/tweets")
 
-puts "","Tweets by month:","================"
+puts "", "Tweets by month:", "================"
 Dir.glob("*.js") do |p|
   # get JSON
   tweets_by_month = JSON.parse(IO.read(p).lines.to_a[1..-1].join)
@@ -103,7 +125,7 @@ Dir.glob("*.js") do |p|
 
     # Ignore retweets
     if v["text"][0...4] == "RT @"
-      ignored_tweets.push "#{v["id_str"]}: #{v["text"]}".gsub("\n","\\n")
+      ignored_tweets.push "#{v["id_str"]}: #{v["text"]}".gsub("\n", "\\n")
       next
     end
 
@@ -141,7 +163,7 @@ puts "#{shared_hashtags.length} hashtags in total"
 puts "#{shared_urls.length} URLs in total"
 
 Dir.chdir IMG_CACHE_PATH
-puts "","Let’s get this party started!"
+puts "", "Let’s get this party started!"
 
 time do
   # Build array of shared URLs
@@ -149,29 +171,30 @@ time do
     url = "#{s}"
     url = "http://#{url}" unless url =~ /^https?:\/\//i
 
-    puts "","=== #{idx+1} of #{shared_urls.length} ==========="
+    puts "", "=== #{idx+1} of #{shared_urls.length} ==========="
 
     # Filter out invalid URLs
-    status_code, expanded_url = expand_url(url)
+    urls = expand_url(url)
+    next if urls.empty?
 
     # Using addressable to deal with IDNs
-    u = Addressable::URI.parse(expanded_url).normalize
+    u = Addressable::URI.parse(urls[0][1]).normalize
     hostname = u.host.to_s.downcase
 
     # Pretty dumb regex but whatever idgaf
     hostname = $~[:url] if hostname =~ /(?<url>[\w\-]+(?:\.\w{2,3}){1,2})$/
 
     urls_by_hostname[hostname] ||= []
-    urls_by_hostname[hostname].push expanded_url
+    urls_by_hostname[hostname].push urls[0][1]
 
-    puts "#{status_code} #{expanded_url.to_s.length > 83 ? "#{expanded_url.to_s[0...80]}..." : expanded_url.to_s}"
+    puts "","#{urls[0][0]} #{urls[0][1].length > 83 ? "#{urls[0][1][0...80]}..." : urls[0][1]}"
   end
 end
 
-puts "","Shared URLs"
+puts "", "Shared URLs", "==========="
 
 Hash[urls_by_hostname.sort].each do |k,v|
-  puts "#{k}: (#{v.length})"
+  puts "#{k} (#{v.length})"
   v.each do |d|
     puts " - #{d}"
   end
