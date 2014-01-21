@@ -67,6 +67,9 @@ def expand_url(url, depth=0)
     end
   rescue SystemExit, Interrupt
     raise
+  rescue Errno::ECONNREFUSED
+    puts "--- Connection refused"
+    return ["---", url]
   rescue SocketError
     # DNS resolution error
     puts "--- DNS failed to resolve"
@@ -76,6 +79,9 @@ def expand_url(url, depth=0)
     return ["---", url]
   rescue HTTPClient::ConnectTimeoutError
     puts "--- Connection timed out"
+    return ["---", url]
+  rescue
+    puts "--- Mystery error"
     return ["---", url]
   end
 end
