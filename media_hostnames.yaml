@@ -1,0 +1,7 @@
+# Known media hostnames
+# These URLs will be ignored by parse_url()
+# Full-size image source URLs will be dumped into media_by_hostname[hostname]
+---
+- yfrog.com
+- yfrog.us
+- twitpic.com

@@ -23,6 +23,9 @@ urls_by_hostname = {}
 urls_by_http_code = {}
 expanded_urls = {}
 
+KNOWN_MEDIA_HOSTNAMES = YAML.load_file "media_hostnames.yaml"
+KNOWN_DEAD_HOSTNAMES = YAML.load_file "dead_hostnames.yaml"
+
 %w(INT TERM).each {|s| trap(s){puts "\ntake care out there \u{1f44b}"; abort}}
 
 @client = HTTPClient.new

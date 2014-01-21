@@ -1,0 +1,11 @@
+# Known dead hostnames
+# These URLs will be ignored by expand_url
+---
+- gowalla.com # :C
+- gowal.la
+- mac.com # more specifically, web.mac.com
+- tiny12.tv # 12seconds.tv
+- drp.ly # old droplr URLs (back in the .ly days)
+- dxn.cm # @bdc's old URL shortener
+- sphotos.ak.fbcdn.net # old(?) Facebook CDN
+- latitudebrowser.com # @sdw's old browser project
