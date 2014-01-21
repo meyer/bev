@@ -66,7 +66,16 @@ def expand_url(url, urls=[])
 
     # Get response
     res = @client.head(uri.to_s) # HTTPClient.head(uri.to_s)
-    status = res.status_code.to_s
+
+    # secrets.blacktree.com returns 405 for HEAD requests
+    # See it in action: curl -I http://secrets.blacktree.com
+    if status == "405"
+      puts "--- HEAD request failed"
+      res = @client.get(uri.to_s)
+    end
+
+    # Status is empty on search.twitter.com URLs for some reason
+    status = res.status_code.to_s.empty? ? "???" : res.status_code.to_s
 
   # Allow interrupt
   rescue SystemExit, Interrupt
@@ -117,7 +126,7 @@ def expand_url(url, urls=[])
 
     else
       # Weird.
-      puts "--- Redirect to identical url (#{url})? Nah."
+      puts "--- Redirect loop"
     end
   end
 
