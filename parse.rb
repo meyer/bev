@@ -96,10 +96,23 @@ Dir.glob("*.js") do |p|
   # get JSON
   tweets_by_month = JSON.parse(IO.read(p).lines.to_a[1..-1].join)
 
+  ignored_tweets = []
   # concat media items
   tweets_by_month.reverse.each do |v|
-    shared_hashtags.concat v["entities"]["hashtags"]
+
+    # Ignore retweets
+    if v["text"][0...4] == "RT @"
+      ignored_tweets.push "#{v["id_str"]}: #{v["text"]}".gsub("\n","\\n")
+      next
+    end
+
+    # Extract hashtags
+    if v["entities"]["hashtags"].length == 0
+      v["entities"]["hashtags"] = Twitter::Extractor.extract_hashtags v["text"]
+    end
+
     if v["entities"]["hashtags"].length > 0
+      shared_hashtags.concat v["entities"]["hashtags"]
       hashtagged_tweets.push "#{v["created_at"]}: #{v["text"]}"
     end
 
@@ -115,6 +128,8 @@ Dir.glob("*.js") do |p|
   end
 
   puts "#{p}: #{tweets_by_month.length} tweets"
+  puts ignored_tweets.map {|t| " - Ignored #{t}"[0..80]}.join("\n") unless ignored_tweets.empty?
+
   tweets.concat tweets_by_month
 end
 
