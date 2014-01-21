@@ -27,6 +27,9 @@ expanded_urls = {}
 KNOWN_MEDIA_HOSTNAMES = YAML.load_file "media_hostnames.yaml"
 KNOWN_DEAD_HOSTNAMES = YAML.load_file "dead_hostnames.yaml"
 
+# Cap max redirects at 20 (same as Chrome)
+MAX_REDIRECTS = 20
+
 %w(INT TERM).each {|s| trap(s){puts "\ntake care out there \u{1f44b}"; abort}}
 
 @client = HTTPClient.new
@@ -40,8 +43,11 @@ KNOWN_DEAD_HOSTNAMES = YAML.load_file "dead_hostnames.yaml"
 # Kill SSL errors, speed up resolution
 @client.ssl_config.verify_mode = OpenSSL::SSL::VERIFY_NONE
 
-# Custom exception for KNOWN_DEAD_HOSTNAMES matches
+# Custom exceptions
 class DeadHostnameError < StandardError; end
+class TooManyRedirectsError < StandardError; end
+class MediaURLError < StandardError; end
+class UnimplementedMediaURLError < StandardError; end
 
 # Start/stop timer
 def time
@@ -58,24 +64,27 @@ def expand_url(url, urls=[])
   status = "---"
   uri = Addressable::URI.parse(url).normalize
 
-  puts "[#{urls.length+1}] #{uri.to_s.length > 83 ? "#{uri.to_s[0...80]}..." : uri.to_s}"
+  # print "[#{(urls.length+1).to_s.rjust(2,"0")}] #{uri.to_s}"
+  # print "[#{urls.length+1}] #{uri.to_s}"
+  print "[#{urls.length+1}] #{uri.to_s.length > 80 ? "#{uri.to_s[0...80]}..." : uri.to_s}"
 
   begin
     # Exclude known dead hostnames
     raise DeadHostnameError if KNOWN_DEAD_HOSTNAMES.include? uri.host
+
+    raise TooManyRedirectsError if urls.length >= MAX_REDIRECTS
 
     # Get response
     res = @client.head(uri.to_s) # HTTPClient.head(uri.to_s)
 
     # secrets.blacktree.com returns 405 for HEAD requests
     # See it in action: curl -I http://secrets.blacktree.com
-    if res.status_code.to_s == "405"
-      puts "--- HEAD request failed"
-      res = @client.get(uri.to_s)
-    end
+    res = @client.get(uri.to_s) if res.status_code.to_s == "405"
 
     # Status is empty on search.twitter.com URLs for some reason
     status = res.status_code.to_s.empty? ? "???" : res.status_code.to_s
+
+    puts " (#{status})"
 
   # Allow interrupt
   rescue SystemExit, Interrupt
@@ -83,30 +92,32 @@ def expand_url(url, urls=[])
 
   # Connection issues
   rescue Errno::ECONNREFUSED
-    puts "--- Connection refused"
+    puts " - Connection refused"
   rescue SocketError
-    puts "--- DNS failed to resolve"
+    puts " - DNS failed to resolve"
   rescue OpenSSL::SSL::SSLError
-    puts "--- SSL error (probably a self-signed certificate)"
+    puts " - SSL error (probably a self-signed certificate)"
   rescue HTTPClient::ConnectTimeoutError
-    puts "--- Connection timed out"
+    puts " - Connection timed out"
   rescue HTTPClient::SendTimeoutError
-    puts "--- Send timed out (problematic)"
+    puts " - Send timed out (problematic)"
   rescue HTTPClient::ReceiveTimeoutError
-    puts "--- Receive timed out (problematic)"
+    puts " - Receive timed out (problematic)"
 
-  # Blacklisted URLs
+  # Custom errors
+  rescue TooManyRedirectsError
+    puts " - Too many redirects (#{urls.length})"
   rescue DeadHostnameError
     status = "xxx"
-    puts "--- '#{uri.host}' is a known dead hostname"
+    puts " - '#{uri.host}' is a known dead hostname"
 
   # Catch-all
   rescue
-    puts "--- Mystery error"
+    puts " - Mystery error"
 
   # Always build url array
   ensure
-    urls.unshift ["#{status}", "#{url}", "#{uri.to_s}"]
+    urls.unshift ["#{status}", "#{uri.to_s}", "#{url}"]
   end
 
   # Redirect status code?
@@ -115,10 +126,16 @@ def expand_url(url, urls=[])
     unless url == res.header["Location"][0]
       location = res.header["Location"][0]
 
-      # Append hostname if not present
-      unless location =~ /^https?:\/\//i
-        puts " |  'Location' did not include path"
-        location = "#{uri.scheme}://#{uri.host}/#{location.gsub(/^\//,"")}"
+      # Protocol-less URL
+      if location[0..1] == "//"
+        puts " |  Relative URL scheme: #{location}"
+        location = "#{uri.scheme}:#{location}"
+      else
+        # Append hostname if not present
+        unless location =~ /^https?:\/\//i
+          puts " |  URL missing hostname: #{location}"
+          location = "#{uri.scheme}://#{uri.host}/#{location.gsub(/^\//,"")}"
+        end
       end
 
       # Roll that beautiful bean footage
@@ -135,7 +152,7 @@ end
 
 Dir.chdir("./tweets/data/js/tweets")
 
-puts "", "Tweets by month:", "================"
+# puts "", "Tweets by month:", "================"
 Dir.glob("*.js") do |p|
   # get JSON
   tweets_by_month = JSON.parse(IO.read(p).lines.to_a[1..-1].join)
@@ -162,17 +179,76 @@ Dir.glob("*.js") do |p|
 
     # Extract URLs
     if v["entities"]["urls"].length == 0
-      shared_urls.concat Twitter::Extractor.extract_urls(v["text"])
+      # TODO: Enabled this only for pre-entities tweets.
+      found_urls = Twitter::Extractor.extract_urls(v["text"])
+      # Remove t.co URLs--they should already be in v["entities"]["urls"]
+      found_urls.reject! {|u| u.match "://t.co/"}
     else
-      shared_urls.concat v["entities"]["urls"].map {|u| u["expanded_url"]}
+      found_urls = v["entities"]["urls"].map {|u| u["expanded_url"]}
     end
 
-    shared_media.concat v["entities"]["media"]
+    found_urls.each do |u|
+      uri = Addressable::URI.parse(u).normalize
+      if KNOWN_MEDIA_HOSTNAMES.include? uri.host
+        media_url = "BROKEN" # uri.to_s
+
+        begin
+
+          case uri.host
+
+          when "cl.ly"
+            contents = HTTPClient.get(uri.to_s, {}, {"Accept" => "application/json"}).body
+            media_url = JSON::parse(contents)["download_url"]
+
+          when "twitpic.com"
+            if uri.to_s =~ /\/(?<url_key>[^\/]+)$/
+              media_url = "http://twitpic.com/show/full/#{$~[:url_key]}"
+              # media_url = HTTPClient.get("http://twitpic.com/show/full/#{$~[:url_key]}").header["Location"][0]
+            else
+              raise MediaURLError
+            end
+
+          when "yfrog.com", "yfrog.us"
+            if uri.to_s =~ /\/(?<url_key>[^\/]+)$/
+              api_url = "http://yfrog.com/api/xmlInfo?path=#{$~[:url_key]}"
+              if @client.get(api_url).header["Location"][0] =~ /(?<host>https?:\/\/.+?\/).*?l=(?<img_url>.+?)&xml/
+                media_url = "#{$~[:host]}#{$~[:img_url]}"
+              else
+                raise MediaURLError
+              end
+            end
+          else
+            raise UnimplementedMediaURLError
+          end
+
+        rescue MediaURLError
+          media_url = "ERROR"
+
+        rescue UnimplementedMediaURLError
+          media_url = "UNIMPLEMENTED"
+
+        rescue
+          media_url = "ERROR2"
+        end
+
+        media_by_hostname[uri.host] ||= {}
+        media_by_hostname[uri.host]["#{uri.host}#{uri.path}"] = media_url
+      end
+    end
+
+    shared_urls.concat found_urls
+
+    # shared_media.concat v["entities"]["media"]
+
+    media_by_hostname["pic.twitter.com"] ||= {}
+    v["entities"]["media"].each do |m|
+      media_by_hostname["pic.twitter.com"][m["display_url"]] = m["media_url"]
+    end
 
   end
 
-  puts "#{p}: #{tweets_by_month.length} tweets"
-  puts ignored_tweets.map {|t| " - Ignored #{t}"[0..80]}.join("\n") unless ignored_tweets.empty?
+  # puts "#{p}: #{tweets_by_month.length} tweets"
+  # puts ignored_tweets.map {|t| " - Ignored #{t}"[0..60]}.join("\n") unless ignored_tweets.empty?
 
   tweets.concat tweets_by_month
 end
@@ -186,6 +262,7 @@ puts "#{shared_urls.length} URLs in total"
 Dir.chdir IMG_CACHE_PATH
 puts "", "Let’s get this party started!"
 
+=begin
 time do
   # Build array of shared URLs
   shared_urls.each_with_index do |s, idx|
@@ -208,7 +285,7 @@ time do
     urls_by_hostname[hostname] ||= []
     urls_by_hostname[hostname].push urls[0][1]
 
-    puts urls[0][0..1].join(" ")
+    puts ">>> #{urls[0][1]}"
   end
 end
 
@@ -218,5 +295,16 @@ Hash[urls_by_hostname.sort].each do |k,v|
   puts "#{k} (#{v.length})"
   v.each do |d|
     puts " - #{d}"
+  end
+end
+
+=end
+
+puts "", "Shared media", "==========="
+
+Hash[media_by_hostname.sort].each do |k,v|
+  puts "#{k} (#{v.length})"
+  v.each do |k,v|
+    puts " - #{k}: #{v}"
   end
 end
