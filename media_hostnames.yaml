@@ -7,5 +7,6 @@
 - yfrog.com
 - yfrog.us
 - twitpic.com
-- d.pr
-- cl.ly
+# Ignoring these two for now, as they’re not directly tied to tweets.
+#- d.pr
+#- cl.ly
